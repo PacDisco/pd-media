@@ -54,6 +54,31 @@ CREATE TABLE IF NOT EXISTS field_uploads (
 CREATE INDEX IF NOT EXISTS field_uploads_trip_idx ON field_uploads(trip_id);
 CREATE INDEX IF NOT EXISTS field_uploads_created_idx ON field_uploads(created_at DESC);
 CREATE INDEX IF NOT EXISTS field_uploads_tags_idx ON field_uploads USING GIN (tags);
+
+-- Google Photos integration
+CREATE TABLE IF NOT EXISTS gphotos_tokens (
+  email          TEXT PRIMARY KEY,
+  access_token   TEXT NOT NULL,
+  refresh_token  TEXT,
+  expires_at     TIMESTAMPTZ NOT NULL,
+  scope          TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS gphotos_albums (
+  id             SERIAL PRIMARY KEY,
+  program        TEXT NOT NULL,
+  owner_email    TEXT NOT NULL,
+  album_id       TEXT NOT NULL,
+  album_title    TEXT,
+  product_url    TEXT,
+  share_url      TEXT,
+  share_token    TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(program, owner_email)
+);
+CREATE INDEX IF NOT EXISTS gphotos_albums_program_idx ON gphotos_albums(program);
 ```
 
 ### 2. Get the Shared Drive ID
@@ -85,6 +110,24 @@ Netlify → site settings → Environment variables → add:
 | `FIELD_UPLOADS_DRIVE_ID` | Shared Drive ID from step 2 |
 | `ALLOWED_ORIGINS` | `https://pd-dashboards.netlify.app,https://dashboards.pacificdiscovery.org` (whatever your pd-dashboard site URL is) |
 | `ADMIN_TOKEN` | Optional — long random string. If set, creating new trips requires the `X-Admin-Token` header. Leave unset for open trip-creation. |
+| `GOOGLE_OAUTH_CLIENT_ID`     | For "Push to Google Photos" — see OAuth setup below |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Same |
+| `PUBLIC_ORIGIN`              | This site's own URL, e.g. `https://media.pacificdiscovery.org`. Used to build the OAuth `redirect_uri`. |
+
+### 5a. Google Cloud Console — OAuth client (for Push to Google Photos)
+
+The Field Media dashboard's "Push to Google Photos" button uses a per-user OAuth flow that's separate from the service-account auth used for Drive uploads. One-time setup:
+
+1. Open the same Google Cloud project where you set up the invoices service account (e.g. `invoice-tool-494123`) in the [GCP console](https://console.cloud.google.com).
+2. **APIs & Services → Library** → search "Photos Library API" → **Enable**.
+3. **APIs & Services → OAuth consent screen** → if not already configured, set it to **Internal** (Workspace org) so only staff can authorize. Add scopes: `openid`, `email`, `profile`, `.../auth/photoslibrary.appendonly`, `.../auth/photoslibrary.sharing`.
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID** → application type **Web application**. Add an authorized redirect URI: `https://media.pacificdiscovery.org/api/gphotos-auth-callback` (and your temporary `*.netlify.app` equivalent during setup). Save.
+5. Copy the **Client ID** and **Client secret** into the Netlify env vars `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`.
+6. Set `PUBLIC_ORIGIN` to whatever your pd-media URL is (Netlify preview URL is fine while testing).
+
+Notes:
+- The service account is used for *uploads to Drive*. For Google Photos, each staff member who clicks "Push to Google Photos" authorizes their *own* Google account — this is required because Google Photos doesn't support service-account access. The album lands in *their* personal Google Photos library, but the shareable link works for anyone you send it to.
+- Albums are scoped to (program, owner_email). Every Bali photo a given staff member pushes goes into one "Pacific Discovery · Bali" album, regardless of season.
 
 ### 6. Trigger deploy
 
