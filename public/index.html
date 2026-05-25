@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>PD Media · Field Upload</title>
+<meta name="description" content="Upload photos and videos from the field. Works on slow connections, resumes after dropouts.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<style>
+  :root {
+    --bg:#0f172a; --panel:#1e293b; --panel-2:#334155; --border:#475569;
+    --text:#f1f5f9; --muted:#94a3b8; --accent:#22d3ee; --accent-dark:#0891b2;
+    --ok:#22c55e; --warn:#f59e0b; --err:#ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { min-height: 100vh; padding-bottom: env(safe-area-inset-bottom); }
+  .container { max-width: 600px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 8px 0 4px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 24px 0 8px; }
+  p.lede { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input[type="text"], select {
+    width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 16px; -webkit-appearance: none;
+  }
+  input[type="text"]:focus, select:focus { outline: none; border-color: var(--accent); }
+  .field { margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; }
+  .row > .field { flex: 1; }
+  button, .btn {
+    width: 100%; padding: 14px; border-radius: 8px; border: 0; cursor: pointer;
+    font-size: 16px; font-weight: 600; transition: opacity 0.15s;
+  }
+  .btn-primary { background: var(--accent); color: #042f3a; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+  .picker-zone {
+    background: var(--panel); border: 2px dashed var(--border); border-radius: 12px;
+    padding: 28px 16px; text-align: center; cursor: pointer; transition: border-color 0.15s;
+  }
+  .picker-zone:active { border-color: var(--accent); }
+  .picker-zone .icon { font-size: 40px; margin-bottom: 8px; }
+  .picker-zone .label { font-size: 15px; font-weight: 500; }
+  .picker-zone .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  input[type="file"] { display: none; }
+  .files { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .file-row {
+    background: var(--panel); border-radius: 10px; padding: 12px; display: flex;
+    flex-direction: column; gap: 6px; border: 1px solid var(--border);
+  }
+  .file-row.complete { border-color: var(--ok); }
+  .file-row.failed   { border-color: var(--err); }
+  .file-row .top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .file-row .preview {
+    width: 44px; height: 44px; border-radius: 6px; background: var(--panel-2);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    overflow: hidden; font-size: 12px; font-weight: 600; color: var(--muted);
+  }
+  .file-row .preview img { width: 100%; height: 100%; object-fit: cover; }
+  .file-row .meta { flex: 1; min-width: 0; }
+  .file-row .name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-row .sub  { font-size: 12px; color: var(--muted); }
+  .file-row .status-icon { flex-shrink: 0; font-size: 18px; }
+  .progress { background: var(--panel-2); border-radius: 999px; height: 6px; overflow: hidden; }
+  .progress .bar { background: var(--accent); height: 100%; transition: width 0.2s; width: 0%; }
+  .file-row.complete .bar { background: var(--ok); width: 100%; }
+  .file-row.failed   .bar { background: var(--err); }
+  .actions { display: flex; gap: 6px; margin-top: 4px; }
+  .actions button {
+    flex: 1; padding: 8px; font-size: 13px; font-weight: 500;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  }
+  .banner {
+    background: var(--panel); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px;
+    font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px;
+    border-left: 3px solid var(--accent);
+  }
+  .banner.warn  { border-left-color: var(--warn); }
+  .banner.err   { border-left-color: var(--err); color: #fecaca; }
+  .banner.ok    { border-left-color: var(--ok);  color: #bbf7d0; }
+  .conn-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); display: inline-block; }
+  .conn-dot.offline { background: var(--err); }
+  .install-prompt {
+    background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%); border-radius: 10px;
+    padding: 12px; font-size: 13px; margin-bottom: 12px; cursor: pointer;
+  }
+  .install-prompt strong { color: #fff; }
+  .small { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+    <h1>📤 Field Media</h1>
+    <span class="small"><span id="conn-dot" class="conn-dot"></span> <span id="conn-label">online</span></span>
+  </div>
+  <p class="lede">Upload photos and videos from anywhere. Stuck uploads automatically resume when signal returns.</p>
+
+  <div id="install-banner" class="install-prompt" style="display:none;" onclick="dismissInstall()">
+    <div><strong>Install this app</strong></div>
+    <div>Tap Share → Add to Home Screen (iOS) or the menu → Install app (Android) for the smoothest field use.</div>
+  </div>
+
+  <div id="banner-host"></div>
+
+  <h2>Trip</h2>
+  <div class="field">
+    <select id="trip-select">
+      <option value="">Loading trips…</option>
+    </select>
+    <div class="small" style="margin-top:6px;">Don't see your trip? Ask the office to add it.</div>
+  </div>
+
+  <h2>Your name <span class="small" style="text-transform:none;">(saved on this device)</span></h2>
+  <div class="field">
+    <input id="uploader-name" type="text" placeholder="So we know who uploaded" autocomplete="name">
+  </div>
+
+  <h2>Pick files</h2>
+  <label for="file-input" class="picker-zone">
+    <div class="icon">📷 / 🎬</div>
+    <div class="label">Tap to pick photos / videos</div>
+    <div class="sub">From your camera roll. Multi-select supported.</div>
+  </label>
+  <input id="file-input" type="file" accept="image/*,video/*" multiple>
+
+  <div id="files" class="files"></div>
+
+  <div style="height: 24px;"></div>
+
+</div>
+
+<script>
+  // =========================================================================
+  // Config
+  // =========================================================================
+  const CHUNK_SIZE       = 8 * 1024 * 1024;        // 8 MB — balance for mobile
+  const MAX_RETRIES      = 5;                       // per chunk
+  const RETRY_BASE_MS    = 1000;                    // exponential backoff
+
+  // =========================================================================
+  // IndexedDB (queue persistence)
+  // =========================================================================
+  // One store: 'uploads'. Each record:
+  //   { id, file (Blob), filename, mime_type, size_bytes, trip_id,
+  //     uploader_name, uploader_device_id, upload_url, bytes_sent,
+  //     status, last_error, created_at }
+  const DB_NAME = "pd-media";
+  const DB_VER  = 1;
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains("uploads")) {
+          db.createObjectStore("uploads", { keyPath: "id" });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror   = () => reject(req.error);
+    });
+  }
+  async function dbPut(record)  { const db = await openDB(); return new Promise((res, rej) => { const t = db.transaction("uploads","readwrite"); t.objectStore("uploads").put(record); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+  async function dbDel(id)       { const db = await openDB(); return new Promise((res, rej) => { const t = db.transaction("uploads","readwrite"); t.objectStore("uploads").delete(id); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+  async function dbGetAll()      { const db = await openDB(); return new Promise((res, rej) => { const t = db.transaction("uploads","readonly"); const r = t.objectStore("uploads").getAll(); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+  async function dbGet(id)       { const db = await openDB(); return new Promise((res, rej) => { const t = db.transaction("uploads","readonly"); const r = t.objectStore("uploads").get(id); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+
+  // =========================================================================
+  // Device identity (persisted across sessions)
+  // =========================================================================
+  function deviceId() {
+    let d = localStorage.getItem("pd-media-device-id");
+    if (!d) {
+      d = "dev-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      localStorage.setItem("pd-media-device-id", d);
+    }
+    return d;
+  }
+  function getUploaderName() { return (document.getElementById("uploader-name").value || "").trim(); }
+  function loadUploaderName() {
+    const v = localStorage.getItem("pd-media-uploader-name") || "";
+    document.getElementById("uploader-name").value = v;
+  }
+  document.getElementById("uploader-name").addEventListener("input", e => {
+    localStorage.setItem("pd-media-uploader-name", e.target.value);
+  });
+
+  // =========================================================================
+  // Connectivity tracking
+  // =========================================================================
+  function updateConn() {
+    const on = navigator.onLine;
+    document.getElementById("conn-dot").classList.toggle("offline", !on);
+    document.getElementById("conn-label").textContent = on ? "online" : "offline";
+    if (on) tryResumeAll();
+  }
+  window.addEventListener("online",  updateConn);
+  window.addEventListener("offline", updateConn);
+
+  // =========================================================================
+  // Banner helpers
+  // =========================================================================
+  function banner(msg, kind = "") {
+    const host = document.getElementById("banner-host");
+    const el = document.createElement("div");
+    el.className = "banner " + kind;
+    el.textContent = msg;
+    host.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
+  }
+
+  // =========================================================================
+  // Trips loader
+  // =========================================================================
+  async function loadTrips() {
+    const sel = document.getElementById("trip-select");
+    try {
+      const r = await fetch("/api/trips");
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Could not load trips");
+      const trips = data.trips || [];
+      if (!trips.length) {
+        sel.innerHTML = "<option value=''>No active trips — ask the office</option>";
+        return;
+      }
+      sel.innerHTML = "<option value=''>Pick a trip…</option>" +
+        trips.map(t => `<option value="${t.id}">${t.season} ${t.year} · ${escapeHtml(t.program)}</option>`).join("");
+      // Restore last-picked trip
+      const last = localStorage.getItem("pd-media-last-trip");
+      if (last && trips.some(t => String(t.id) === last)) sel.value = last;
+    } catch (e) {
+      sel.innerHTML = "<option value=''>Couldn't load trips</option>";
+      banner("Could not load trips: " + e.message, "err");
+    }
+  }
+  document.getElementById("trip-select").addEventListener("change", e => {
+    if (e.target.value) localStorage.setItem("pd-media-last-trip", e.target.value);
+  });
+
+  // =========================================================================
+  // File picker
+  // =========================================================================
+  document.getElementById("file-input").addEventListener("change", async e => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const tripId = Number(document.getElementById("trip-select").value);
+    if (!tripId) { banner("Pick a trip first.", "warn"); return; }
+    for (const f of files) await queueUpload(f, tripId);
+    e.target.value = ""; // allow same-file re-selection
+    drainQueue();
+  });
+
+  // =========================================================================
+  // Queue + render
+  // =========================================================================
+  // In-memory map of upload id → DOM row (so we can update progress fast).
+  const rowEls = new Map();
+
+  function rowFor(record) {
+    if (rowEls.has(record.id)) return rowEls.get(record.id);
+    const tpl = document.createElement("div");
+    tpl.className = "file-row";
+    tpl.innerHTML = `
+      <div class="top">
+        <div class="preview"></div>
+        <div class="meta">
+          <div class="name"></div>
+          <div class="sub"></div>
+        </div>
+        <div class="status-icon"></div>
+      </div>
+      <div class="progress"><div class="bar"></div></div>
+      <div class="actions"></div>
+    `;
+    document.getElementById("files").prepend(tpl);
+    rowEls.set(record.id, tpl);
+    return tpl;
+  }
+
+  function fmtSize(n) {
+    if (!n) return "";
+    if (n < 1024) return n + " B";
+    if (n < 1024*1024) return (n/1024).toFixed(0) + " KB";
+    if (n < 1024*1024*1024) return (n/1024/1024).toFixed(1) + " MB";
+    return (n/1024/1024/1024).toFixed(2) + " GB";
+  }
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  }
+
+  function renderRow(record, opts = {}) {
+    const row = rowFor(record);
+    row.classList.toggle("complete", record.status === "complete");
+    row.classList.toggle("failed",   record.status === "failed");
+
+    row.querySelector(".name").textContent = record.filename;
+    const pct = record.size_bytes ? Math.round(100 * record.bytes_sent / record.size_bytes) : 0;
+    const subParts = [
+      fmtSize(record.size_bytes),
+      record.status === "complete" ? "Uploaded" :
+      record.status === "failed"   ? "Failed"   :
+      record.status === "queued"   ? "Waiting"  :
+      record.status === "uploading" ? `${pct}%` : "Paused",
+    ];
+    if (record.last_error && record.status === "failed") subParts.push(record.last_error.slice(0, 80));
+    row.querySelector(".sub").textContent = subParts.filter(Boolean).join(" · ");
+
+    const icon =
+      record.status === "complete" ? "✅" :
+      record.status === "failed"   ? "⚠️" :
+      record.status === "uploading" ? "⬆️" : "⏳";
+    row.querySelector(".status-icon").textContent = icon;
+
+    row.querySelector(".bar").style.width = pct + "%";
+
+    // Actions: retry on failed, remove on complete/failed
+    const actions = row.querySelector(".actions");
+    actions.innerHTML = "";
+    if (record.status === "failed") {
+      const retry = document.createElement("button");
+      retry.textContent = "Retry";
+      retry.onclick = async () => {
+        const r = await dbGet(record.id);
+        if (!r) return;
+        r.status = "queued"; r.last_error = null;
+        await dbPut(r); renderRow(r); drainQueue();
+      };
+      actions.appendChild(retry);
+    }
+    if (record.status === "complete" || record.status === "failed") {
+      const remove = document.createElement("button");
+      remove.textContent = "Remove from list";
+      remove.onclick = async () => {
+        await dbDel(record.id);
+        rowEls.get(record.id)?.remove();
+        rowEls.delete(record.id);
+      };
+      actions.appendChild(remove);
+    }
+
+    // Preview thumbnail for images
+    if (!opts.skipPreview && record.file && record.mime_type?.startsWith("image/")) {
+      const previewEl = row.querySelector(".preview");
+      if (!previewEl.querySelector("img")) {
+        const url = URL.createObjectURL(record.file);
+        previewEl.innerHTML = `<img src="${url}" alt="">`;
+        // Free the blob URL after the image is loaded
+        previewEl.querySelector("img").onload = () => URL.revokeObjectURL(url);
+      }
+    } else if (!opts.skipPreview) {
+      const ext = (record.filename.split(".").pop() || "").toUpperCase().slice(0,5);
+      row.querySelector(".preview").textContent = ext || (record.mime_type?.startsWith("video/") ? "VID" : "FILE");
+    }
+  }
+
+  // Add a file to the queue (writes to IDB so it survives a page reload).
+  async function queueUpload(file, tripId) {
+    const record = {
+      id:                  "up-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+      file,                                            // stored as a Blob in IDB
+      filename:            file.name,
+      mime_type:           file.type || "application/octet-stream",
+      size_bytes:          file.size,
+      trip_id:             tripId,
+      uploader_name:       getUploaderName() || null,
+      uploader_device_id:  deviceId(),
+      upload_url:          null,
+      bytes_sent:          0,
+      status:              "queued",
+      last_error:          null,
+      created_at:          Date.now(),
+    };
+    await dbPut(record);
+    renderRow(record);
+  }
+
+  // =========================================================================
+  // Upload engine — drainQueue + uploadOne
+  // =========================================================================
+  let draining = false;
+
+  async function drainQueue() {
+    if (draining) return;
+    if (!navigator.onLine) { await registerSync(); return; }
+    draining = true;
+    try {
+      while (true) {
+        const all = await dbGetAll();
+        const next = all.find(r => r.status === "queued" || r.status === "uploading");
+        if (!next) break;
+        next.status = "uploading"; await dbPut(next); renderRow(next, { skipPreview: true });
+        try {
+          await uploadOne(next);
+        } catch (e) {
+          next.status = "failed"; next.last_error = e.message; await dbPut(next); renderRow(next, { skipPreview: true });
+        }
+      }
+    } finally {
+      draining = false;
+    }
+  }
+
+  async function uploadOne(rec) {
+    // 1. If we don't have an upload URL yet, mint one.
+    if (!rec.upload_url) {
+      const initRes = await fetch("/api/upload-init", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trip_id:             rec.trip_id,
+          filename:            rec.filename,
+          mime_type:           rec.mime_type,
+          size_bytes:          rec.size_bytes,
+          uploader_name:       rec.uploader_name,
+          uploader_device_id:  rec.uploader_device_id,
+        }),
+      });
+      const initData = await initRes.json();
+      if (!initRes.ok) throw new Error(initData.error || `init HTTP ${initRes.status}`);
+      rec.upload_url = initData.uploadUrl;
+      rec.bytes_sent = 0;
+      await dbPut(rec);
+    }
+
+    // 2. Chunked PUTs until done.
+    const total = rec.size_bytes;
+    while (rec.bytes_sent < total) {
+      const start = rec.bytes_sent;
+      const end   = Math.min(start + CHUNK_SIZE, total);
+      const blob  = rec.file.slice(start, end);
+
+      let attempt = 0;
+      let chunkResp;
+      while (true) {
+        try {
+          chunkResp = await fetch(rec.upload_url, {
+            method: "PUT",
+            headers: { "Content-Range": `bytes ${start}-${end-1}/${total}` },
+            body: blob,
+          });
+        } catch (netErr) {
+          if (++attempt > MAX_RETRIES) throw new Error("Network failure: " + netErr.message);
+          await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
+          continue;
+        }
+
+        // 308 = resume incomplete; Drive tells us via Range header how much it has.
+        if (chunkResp.status === 308) {
+          const range = chunkResp.headers.get("range");
+          if (range) {
+            const m = /bytes=0-(\d+)/.exec(range);
+            if (m) rec.bytes_sent = Number(m[1]) + 1;
+            else   rec.bytes_sent = end;
+          } else {
+            rec.bytes_sent = end;
+          }
+          break;
+        }
+        if (chunkResp.status === 200 || chunkResp.status === 201) {
+          rec.bytes_sent = total;
+          const fileMeta = await chunkResp.json();
+          rec.drive_file_id = fileMeta.id;
+          break;
+        }
+        // Retryable 5xx?
+        if (chunkResp.status >= 500 && chunkResp.status < 600) {
+          if (++attempt > MAX_RETRIES) throw new Error(`Drive ${chunkResp.status}`);
+          await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
+          continue;
+        }
+        // 4xx — likely expired upload URL or bad request; surface as failed.
+        const errTxt = await chunkResp.text();
+        throw new Error(`Drive ${chunkResp.status}: ${errTxt.slice(0, 200)}`);
+      }
+      await dbPut(rec);
+      renderRow(rec, { skipPreview: true });
+    }
+
+    // 3. Notify the backend so it records the row and grabs the thumbnail.
+    if (rec.drive_file_id) {
+      try {
+        await fetch("/api/upload-complete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            trip_id:             rec.trip_id,
+            drive_file_id:       rec.drive_file_id,
+            filename:            rec.filename,
+            mime_type:           rec.mime_type,
+            size_bytes:          rec.size_bytes,
+            uploader_name:       rec.uploader_name,
+            uploader_device_id:  rec.uploader_device_id,
+          }),
+        });
+      } catch (e) {
+        // Best-effort. The file is in Drive; we can reconcile later.
+        console.warn("upload-complete failed:", e);
+      }
+    }
+
+    rec.status = "complete";
+    await dbPut(rec);
+    renderRow(rec, { skipPreview: true });
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // =========================================================================
+  // Resume mechanics
+  // =========================================================================
+  async function tryResumeAll() {
+    const all = await dbGetAll();
+    const anyPending = all.some(r => r.status === "queued" || r.status === "uploading" || r.status === "failed");
+    if (anyPending && navigator.onLine) drainQueue();
+  }
+
+  // Restore the UI for everything in IDB on page load.
+  async function rehydrate() {
+    const all = await dbGetAll();
+    // Newest first
+    all.sort((a,b) => b.created_at - a.created_at);
+    for (const r of all) renderRow(r);
+  }
+
+  // iOS doesn't fire `sync` events. Use visibility / focus to resume.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) tryResumeAll();
+  });
+  window.addEventListener("focus", tryResumeAll);
+
+  // Listen for the service worker telling us connectivity returned (Android).
+  navigator.serviceWorker?.addEventListener("message", (e) => {
+    if (e.data?.type === "RESUME_UPLOADS") tryResumeAll();
+  });
+
+  async function registerSync() {
+    try {
+      const reg = await navigator.serviceWorker?.ready;
+      if (reg && "sync" in reg) await reg.sync.register("pd-media-resume-uploads");
+    } catch { /* Background Sync not supported (iOS) — fall back to visibility */ }
+  }
+
+  // =========================================================================
+  // Service worker registration + PWA install hint
+  // =========================================================================
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/service-worker.js").catch(err => {
+        console.warn("SW registration failed:", err);
+      });
+    });
+  }
+
+  // Show install hint on iOS only if not already installed standalone.
+  function maybeShowInstall() {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches ||
+                       (window.navigator.standalone === true);
+    if (standalone) return;
+    if (localStorage.getItem("pd-media-install-dismissed")) return;
+    // On Android, the browser usually offers its own install prompt — we only nag iOS users.
+    if (isIOS) document.getElementById("install-banner").style.display = "block";
+  }
+  function dismissInstall() {
+    localStorage.setItem("pd-media-install-dismissed", "1");
+    document.getElementById("install-banner").style.display = "none";
+  }
+
+  // =========================================================================
+  // Boot
+  // =========================================================================
+  loadUploaderName();
+  loadTrips();
+  rehydrate().then(() => tryResumeAll());
+  updateConn();
+  maybeShowInstall();
+</script>
+</body>
+</html>

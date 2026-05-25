@@ -1,0 +1,15 @@
+{
+  "name": "pd-media",
+  "version": "1.0.0",
+  "description": "Pacific Discovery field media uploader — standalone PWA for field staff to upload photos/videos with resumable + offline queueing. Deploys to media.pacificdiscovery.org.",
+  "private": true,
+  "engines": { "node": "20" },
+  "scripts": {
+    "dev": "netlify dev",
+    "deploy": "netlify deploy --prod"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "googleapis": "^171.4.0"
+  }
+}
