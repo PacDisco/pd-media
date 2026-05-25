@@ -84,12 +84,53 @@
   .banner.ok    { border-left-color: var(--ok);  color: #bbf7d0; }
   .conn-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); display: inline-block; }
   .conn-dot.offline { background: var(--err); }
-  .install-prompt {
-    background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%); border-radius: 10px;
-    padding: 12px; font-size: 13px; margin-bottom: 12px; cursor: pointer;
-  }
-  .install-prompt strong { color: #fff; }
   .small { font-size: 12px; color: var(--muted); }
+
+  /* Install modal */
+  #install-modal {
+    position: fixed; inset: 0; background: rgba(2, 6, 23, 0.92); z-index: 60;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+    padding-top: max(20px, env(safe-area-inset-top));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+  }
+  #install-modal.open { display: flex; }
+  #install-modal .card {
+    background: linear-gradient(180deg, var(--panel) 0%, #172033 100%);
+    border: 1px solid var(--border); border-radius: 16px;
+    max-width: 420px; width: 100%; padding: 24px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  #install-modal .app-icon {
+    width: 64px; height: 64px; border-radius: 14px; margin: 0 auto 12px; display: block;
+    box-shadow: 0 4px 16px rgba(34, 211, 238, 0.3);
+  }
+  #install-modal h2 { font-size: 19px; text-align: center; margin: 0 0 6px; color: var(--text); }
+  #install-modal .tagline { font-size: 14px; color: var(--muted); text-align: center; margin-bottom: 18px; }
+  #install-modal ul.benefits {
+    list-style: none; padding: 0; margin: 0 0 18px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #install-modal ul.benefits li {
+    display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--text);
+  }
+  #install-modal ul.benefits li .check { color: var(--accent); flex-shrink: 0; font-weight: 700; }
+  #install-modal .ios-steps {
+    background: rgba(34, 211, 238, 0.06); border: 1px solid rgba(34, 211, 238, 0.15);
+    border-radius: 10px; padding: 14px; margin-bottom: 14px; font-size: 13px; color: var(--text);
+    display: none;
+  }
+  #install-modal .ios-steps.show { display: block; }
+  #install-modal .ios-steps ol { padding-left: 20px; margin: 6px 0 0; }
+  #install-modal .ios-steps ol li { margin: 4px 0; line-height: 1.45; }
+  #install-modal .btn-primary {
+    width: 100%; padding: 13px; border-radius: 10px; border: 0;
+    background: var(--accent); color: #042f3a; font-weight: 700; font-size: 16px; cursor: pointer;
+  }
+  #install-modal .btn-skip {
+    width: 100%; padding: 11px; margin-top: 10px; border-radius: 10px;
+    background: transparent; border: 0; color: var(--muted); font-size: 14px; cursor: pointer;
+  }
+  #install-modal .btn-skip:hover { color: var(--text); }
 </style>
 </head>
 <body>
@@ -100,11 +141,6 @@
     <span class="small"><span id="conn-dot" class="conn-dot"></span> <span id="conn-label">online</span></span>
   </div>
   <p class="lede">Upload photos and videos from anywhere. Stuck uploads automatically resume when signal returns.</p>
-
-  <div id="install-banner" class="install-prompt" style="display:none;" onclick="dismissInstall()">
-    <div><strong>Install this app</strong></div>
-    <div>Tap Share → Add to Home Screen (iOS) or the menu → Install app (Android) for the smoothest field use.</div>
-  </div>
 
   <div id="banner-host"></div>
 
@@ -133,6 +169,33 @@
 
   <div style="height: 24px;"></div>
 
+</div>
+
+<!-- Install prompt -->
+<div id="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title">
+  <div class="card">
+    <img src="/icons/icon-192.png" alt="" class="app-icon">
+    <h2 id="install-title">Install PD Media</h2>
+    <p class="tagline">Add it to your home screen for the best field experience.</p>
+
+    <ul class="benefits">
+      <li><span class="check">✓</span><span>Opens like a real app — full screen, no browser bar</span></li>
+      <li><span class="check">✓</span><span>Resumes uploads automatically when signal returns</span></li>
+      <li><span class="check">✓</span><span>Works even with no signal — files queue and send when you're back online</span></li>
+    </ul>
+
+    <div id="install-ios-steps" class="ios-steps">
+      <strong>On iPhone / iPad:</strong>
+      <ol>
+        <li>Tap the <strong>Share</strong> button (the square with the arrow up) at the bottom of Safari.</li>
+        <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+        <li>Tap <strong>Add</strong> in the top right.</li>
+      </ol>
+    </div>
+
+    <button id="install-action" class="btn-primary">Install</button>
+    <button id="install-skip"   class="btn-skip">Not now</button>
+  </div>
 </div>
 
 <script>
@@ -554,19 +617,116 @@
     });
   }
 
-  // Show install hint on iOS only if not already installed standalone.
-  function maybeShowInstall() {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const standalone = window.matchMedia("(display-mode: standalone)").matches ||
-                       (window.navigator.standalone === true);
-    if (standalone) return;
-    if (localStorage.getItem("pd-media-install-dismissed")) return;
-    // On Android, the browser usually offers its own install prompt — we only nag iOS users.
-    if (isIOS) document.getElementById("install-banner").style.display = "block";
+  // -----------------------------------------------------------------------
+  // PWA install flow
+  // -----------------------------------------------------------------------
+  // - Android (Chrome, Edge, Samsung Internet): the browser fires
+  //   `beforeinstallprompt`. We capture it, show our own UI, and call
+  //   .prompt() when the user taps "Install".
+  // - iOS Safari has no install API. We detect iOS and show step-by-step
+  //   instructions instead.
+  // - Desktop: we still offer the prompt where supported, otherwise hide.
+  let deferredInstallPrompt = null;
+
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    // If the modal is already open (e.g. on first visit), the button is now
+    // a real Install trigger; no UI change needed since maybeShowInstall
+    // shows the modal early.
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    localStorage.setItem("pd-media-installed", "1");
+    closeInstallModal();
+  });
+
+  function isStandalone() {
+    return window.matchMedia("(display-mode: standalone)").matches ||
+           window.navigator.standalone === true;
   }
-  function dismissInstall() {
+  function isIOS() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  }
+  function isAndroid() {
+    return /Android/i.test(navigator.userAgent);
+  }
+
+  function openInstallModal() {
+    const m = document.getElementById("install-modal");
+    const action = document.getElementById("install-action");
+    const iosSteps = document.getElementById("install-ios-steps");
+
+    if (isIOS()) {
+      iosSteps.classList.add("show");
+      action.textContent = "Got it";
+    } else if (deferredInstallPrompt) {
+      iosSteps.classList.remove("show");
+      action.textContent = "Install";
+    } else {
+      // Browser hasn't fired beforeinstallprompt yet — could be desktop, or
+      // already installed once, or unsupported browser. Show a friendly hint.
+      iosSteps.classList.remove("show");
+      action.textContent = "OK";
+    }
+    m.classList.add("open");
+  }
+
+  function closeInstallModal() {
+    document.getElementById("install-modal").classList.remove("open");
+  }
+
+  async function triggerInstall() {
+    if (isIOS()) {
+      // iOS path: there's nothing to trigger; the steps in the modal are
+      // the install. Closing = "Got it".
+      localStorage.setItem("pd-media-install-dismissed", "1");
+      closeInstallModal();
+      return;
+    }
+    if (!deferredInstallPrompt) {
+      // Already installed or browser unsupported — just close.
+      localStorage.setItem("pd-media-install-dismissed", "1");
+      closeInstallModal();
+      return;
+    }
+    try {
+      deferredInstallPrompt.prompt();
+      const result = await deferredInstallPrompt.userChoice;
+      if (result.outcome !== "accepted") {
+        // User picked "no" in the native prompt — remember so we don't bug them again
+        localStorage.setItem("pd-media-install-dismissed", "1");
+      }
+    } catch (e) {
+      console.warn("install prompt failed", e);
+    } finally {
+      deferredInstallPrompt = null;
+      closeInstallModal();
+    }
+  }
+
+  function skipInstall() {
     localStorage.setItem("pd-media-install-dismissed", "1");
-    document.getElementById("install-banner").style.display = "none";
+    closeInstallModal();
+  }
+
+  document.getElementById("install-action").addEventListener("click", triggerInstall);
+  document.getElementById("install-skip").addEventListener("click", skipInstall);
+
+  function maybeShowInstall() {
+    if (isStandalone())                                    return;  // already installed
+    if (localStorage.getItem("pd-media-installed") === "1") return;
+    if (localStorage.getItem("pd-media-install-dismissed")) return;  // user said no
+    // On Android, give the browser ~1s to fire `beforeinstallprompt` so the
+    // button can wire up to the native installer. The modal still appears
+    // either way; if the event hasn't fired by the time the user taps,
+    // we'll just close gracefully.
+    if (isAndroid()) {
+      setTimeout(openInstallModal, 1000);
+    } else {
+      openInstallModal();
+    }
   }
 
   // =========================================================================
