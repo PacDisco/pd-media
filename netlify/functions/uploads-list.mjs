@@ -45,6 +45,7 @@ export default async (req) => {
     const sqlText = `
       SELECT fu.id, fu.trip_id, fu.uploader_name, fu.filename, fu.mime_type, fu.size_bytes,
              fu.drive_file_id, fu.drive_file_url, fu.thumbnail_url, fu.tags, fu.notes,
+             fu.approved_for_gallery,
              fu.created_at,
              ft.season, ft.year, ft.program, ft.drive_folder_url
         FROM field_uploads fu
