@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>Pacific Discovery — Trip Gallery</title>
+<style>
+  :root {
+    --bg:#f8fafc; --panel:#fff; --border:#e2e8f0;
+    --text:#0f172a; --muted:#64748b;
+    --accent:#0891b2; --accent-soft:#cffafe;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
+
+  header.hero {
+    text-align: center; padding: 32px 0 24px;
+  }
+  header.hero .brand { font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  header.hero h1 { font-size: 32px; font-weight: 700; margin: 6px 0 4px; }
+  header.hero .sub { color: var(--muted); font-size: 14px; }
+
+  .empty, .error {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 48px 20px; text-align: center; color: var(--muted);
+  }
+  .error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .error h2 { margin: 0 0 8px; color: #7f1d1d; font-size: 18px; }
+
+  .grid {
+    display: grid; gap: 8px;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  @media (min-width: 540px) { .grid { grid-template-columns: repeat(3, 1fr); gap: 10px; } }
+  @media (min-width: 800px) { .grid { grid-template-columns: repeat(4, 1fr); gap: 12px; } }
+  @media (min-width: 1100px){ .grid { grid-template-columns: repeat(5, 1fr); } }
+
+  .tile {
+    position: relative; aspect-ratio: 1 / 1; background: #e2e8f0; border-radius: 8px;
+    overflow: hidden; cursor: zoom-in; transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .tile:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; background: #e2e8f0; }
+  .tile.video::after {
+    content: "▶"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 38px; color: rgba(255,255,255,0.9); text-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    pointer-events: none;
+  }
+  .tile-fallback {
+    width: 100%; height: 100%; background: linear-gradient(135deg, #0891b2, #06b6d4);
+    display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 600; font-size: 12px;
+  }
+
+  footer.footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 48px; }
+  footer.footer a { color: var(--accent); text-decoration: none; }
+
+  /* Lightbox */
+  #lb { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.94); z-index: 50; display: none; flex-direction: column; }
+  #lb.open { display: flex; }
+  #lb .bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 16px; color: #fff;
+  }
+  #lb .name { font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
+  #lb button, #lb a.btn {
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.18); color: #fff;
+    padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; text-decoration: none; line-height: 1;
+  }
+  #lb button[disabled] { opacity: 0.4; cursor: default; }
+  #lb .stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 12px; overflow: hidden; }
+  #lb img, #lb video { max-width: 100%; max-height: 100%; border-radius: 8px; background: #000; }
+  #lb .counter { font-size: 12px; color: rgba(255,255,255,0.7); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="brand">Pacific Discovery</div>
+    <h1 id="trip-title">Loading…</h1>
+    <p class="sub" id="trip-sub"></p>
+  </header>
+
+  <div id="loading" class="empty">Loading photos…</div>
+  <div id="error"   class="error" style="display:none;"></div>
+  <div id="empty"   class="empty" style="display:none;">No photos are ready to view yet. Check back soon!</div>
+  <div id="grid"    class="grid"  style="display:none;"></div>
+
+  <footer class="footer">
+    <p>You're viewing a private gallery shared by Pacific Discovery.<br>
+    <a href="https://pacificdiscovery.org" target="_blank">pacificdiscovery.org</a></p>
+  </footer>
+</div>
+
+<div id="lb" role="dialog" aria-modal="true">
+  <div class="bar">
+    <div style="display:flex; align-items:center; gap:10px; min-width:0; flex:1;">
+      <button id="lb-prev" title="Previous (←)">←</button>
+      <button id="lb-next" title="Next (→)">→</button>
+      <span class="counter" id="lb-counter"></span>
+      <span class="name"    id="lb-name"></span>
+    </div>
+    <div style="display:flex; gap:6px; flex-shrink:0;">
+      <a class="btn" id="lb-download" title="Download">⬇ Download</a>
+      <button id="lb-close" title="Close (Esc)">✕</button>
+    </div>
+  </div>
+  <div class="stage" id="lb-stage" onclick="if(event.target.id==='lb-stage') closeLb();"></div>
+</div>
+
+<script>
+  const token = new URLSearchParams(location.search).get("t") || "";
+  const API   = `/api/gallery-data?t=${encodeURIComponent(token)}`;
+  function fileUrl(id, opts = {}) {
+    return `/api/gallery-file?t=${encodeURIComponent(token)}&id=${encodeURIComponent(id)}` + (opts.download ? "&download=1" : "");
+  }
+
+  let uploads = [];
+  let lbIndex = 0;
+
+  function show(id) { document.getElementById(id).style.display = ""; }
+  function hide(id) { document.getElementById(id).style.display = "none"; }
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+  function fmt(s) {
+    if (!s) return "";
+    const d = new Date(String(s).replace(" ", "T"));
+    if (isNaN(d)) return "";
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "long" });
+  }
+
+  async function load() {
+    if (!token) {
+      showError("This link is incomplete. Please use the full URL provided by Pacific Discovery.");
+      return;
+    }
+    try {
+      const r = await fetch(API);
+      const d = await r.json();
+      if (!r.ok) {
+        showError(d.error || `Could not load (HTTP ${r.status}).`);
+        return;
+      }
+      uploads = d.uploads || [];
+      const t = d.trip;
+      document.getElementById("trip-title").textContent = t ? `${t.program}` : "Photos";
+      document.getElementById("trip-sub").textContent   = t ? `${t.season} ${t.year}` : "";
+      hide("loading");
+      if (!uploads.length) { show("empty"); return; }
+      renderGrid();
+      show("grid");
+    } catch (e) {
+      showError("Couldn't reach the gallery. Try again in a moment.");
+    }
+  }
+
+  function showError(msg) {
+    hide("loading"); hide("grid"); hide("empty");
+    const el = document.getElementById("error");
+    el.innerHTML = `<h2>This link can't be opened</h2><p>${escapeHtml(msg)}</p>`;
+    el.style.display = "";
+  }
+
+  function renderGrid() {
+    const html = uploads.map((u, i) => {
+      const isVideo = (u.mime_type || "").startsWith("video/");
+      const isImage = (u.mime_type || "").startsWith("image/");
+      const src     = (isImage || isVideo) ? fileUrl(u.drive_file_id) : "";
+      const body    = src
+        ? (isImage
+            ? `<img src="${escapeAttr(src)}" alt="${escapeAttr(u.filename)}" loading="lazy">`
+            : `<img src="${escapeAttr(src)}" alt="${escapeAttr(u.filename)}" loading="lazy" onerror="this.style.display='none'">`)
+        : `<div class="tile-fallback">${escapeHtml((u.filename.split(".").pop() || "FILE").toUpperCase())}</div>`;
+      return `<div class="tile ${isVideo ? "video" : ""}" onclick="openLb(${i})">${body}</div>`;
+    }).join("");
+    document.getElementById("grid").innerHTML = html;
+  }
+
+  function openLb(i) {
+    lbIndex = i;
+    renderLb();
+    document.getElementById("lb").classList.add("open");
+    document.body.style.overflow = "hidden";
+  }
+  function closeLb() {
+    document.getElementById("lb").classList.remove("open");
+    document.getElementById("lb-stage").innerHTML = "";
+    document.body.style.overflow = "";
+  }
+  function step(delta) {
+    const next = Math.min(uploads.length - 1, Math.max(0, lbIndex + delta));
+    if (next === lbIndex) return;
+    lbIndex = next; renderLb();
+  }
+  function renderLb() {
+    const u = uploads[lbIndex];
+    if (!u) return;
+    const isImage = (u.mime_type || "").startsWith("image/");
+    const isVideo = (u.mime_type || "").startsWith("video/");
+    const src = fileUrl(u.drive_file_id);
+
+    document.getElementById("lb-name").textContent = u.filename;
+    document.getElementById("lb-counter").textContent = `${lbIndex + 1} / ${uploads.length}`;
+    document.getElementById("lb-download").href = fileUrl(u.drive_file_id, { download: true });
+    document.getElementById("lb-prev").disabled = lbIndex === 0;
+    document.getElementById("lb-next").disabled = lbIndex >= uploads.length - 1;
+
+    const stage = document.getElementById("lb-stage");
+    if (isImage)      stage.innerHTML = `<img src="${escapeAttr(src)}" alt="${escapeAttr(u.filename)}">`;
+    else if (isVideo) stage.innerHTML = `<video src="${escapeAttr(src)}" controls autoplay playsinline></video>`;
+    else              stage.innerHTML = `<div style="color:#fff;background:#1e293b;padding:32px;border-radius:8px;">No preview for this file type.</div>`;
+  }
+  window.openLb     = openLb;
+  window.closeLb    = closeLb;
+  document.getElementById("lb-prev").addEventListener("click", () => step(-1));
+  document.getElementById("lb-next").addEventListener("click", () => step(1));
+  document.getElementById("lb-close").addEventListener("click", closeLb);
+  document.addEventListener("keydown", (e) => {
+    if (!document.getElementById("lb").classList.contains("open")) return;
+    if (e.key === "Escape")    closeLb();
+    if (e.key === "ArrowLeft") step(-1);
+    if (e.key === "ArrowRight") step(1);
+  });
+
+  load();
+</script>
+
+</body>
+</html>

@@ -39,3 +39,13 @@
     X-Frame-Options = "SAMEORIGIN"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+
+# The public family gallery is meant to be embedded inside the student portal,
+# so we override the frame policy for that one page only. Using CSP
+# frame-ancestors instead of X-Frame-Options because CSP allows a list of
+# permitted origins.
+[[headers]]
+  for = "/gallery.html"
+  [headers.values]
+    X-Frame-Options = ""
+    Content-Security-Policy = "frame-ancestors 'self' https://*.pacificdiscovery.org https://*.netlify.app"
