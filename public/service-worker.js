@@ -1,13 +1,21 @@
 // PD Media — service worker
 // -----------------------------------------------------------------------
 // Two jobs:
-//   1. Cache the app shell so the PWA opens even with zero signal.
-//   2. Background Sync: when an upload is queued offline, the page tells the
-//      SW to wake up when network comes back and finish the chunked PUTs.
+//   1. Make the app open instantly when there's no signal (cache fallback).
+//   2. Background Sync: when an upload is queued offline, the SW wakes the
+//      page up to finish the chunked PUTs when network returns.
 //
-// Bump CACHE_NAME whenever the app shell changes to force a refresh.
+// Strategy:
+//   - HTML & JS / app shell: **network-first** with cache fallback. This
+//     means each app open fetches fresh code if online — so deploys reach
+//     installed phones the next time they load the app with signal. Cache
+//     is only used when fully offline.
+//   - Static assets (icons, manifest): cache-first. They rarely change.
+//   - API & upload calls: pass through to the network, never cached.
+//
+// Bump CACHE_NAME whenever we want to wipe out a bad cached version.
 
-const CACHE_NAME  = "pd-media-v1";
+const CACHE_NAME  = "pd-media-v3";
 const APP_SHELL   = [
   "/",
   "/index.html",
@@ -26,23 +34,28 @@ self.addEventListener("install", (event) => {
 // --- Activate: clean old caches ----------------------------------------
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      )
+      .then(() => self.clients.claim())
   );
 });
 
-// --- Fetch: cache-first for app shell, network-first for API ----------
+// --- Fetch routing ------------------------------------------------------
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
+  const req = event.request;
+  const url = new URL(req.url);
 
-  // Never touch upload PUTs — those go straight to Google.
-  if (url.hostname.endsWith("googleapis.com") || url.hostname.endsWith("google.com")) return;
+  // Don't touch upload PUTs or anything cross-origin.
+  if (url.origin !== self.location.origin) return;
+  if (req.method !== "GET") return;
 
-  // Network-first for our own API
+  // API + functions: always network, never cache. If offline, return a
+  // tidy JSON error the page can render.
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/.netlify/functions/")) {
     event.respondWith(
-      fetch(event.request).catch(() => new Response(
+      fetch(req).catch(() => new Response(
         JSON.stringify({ error: "Offline" }),
         { status: 503, headers: { "Content-Type": "application/json" } }
       ))
@@ -50,35 +63,64 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Cache-first for everything else (app shell)
-  event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request).then((resp) => {
-      // Stash GETs we didn't pre-cache for next time
-      if (event.request.method === "GET" && resp.ok && resp.type === "basic") {
-        const clone = resp.clone();
-        caches.open(CACHE_NAME).then((c) => c.put(event.request, clone)).catch(() => {});
-      }
-      return resp;
-    }))
-  );
+  // Navigations (HTML) + script files → network-first so new deploys reach
+  // the phone next time the app opens with signal.
+  const isHtml   = req.mode === "navigate" || req.destination === "document" ||
+                   url.pathname === "/" || url.pathname.endsWith(".html");
+  const isScript = req.destination === "script";
+  if (isHtml || isScript) {
+    event.respondWith(networkFirst(req));
+    return;
+  }
+
+  // Static assets: cache-first.
+  event.respondWith(cacheFirst(req));
 });
 
+async function networkFirst(req) {
+  try {
+    const fresh = await fetch(req);
+    if (fresh.ok) {
+      // Stash the fresh copy so we can serve it later when offline
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(req, fresh.clone()).catch(() => {});
+    }
+    return fresh;
+  } catch {
+    const cached = await caches.match(req);
+    if (cached) return cached;
+    // Last resort: serve the cached root so the app still opens
+    return (await caches.match("/index.html")) ||
+           new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+  }
+}
+
+async function cacheFirst(req) {
+  const cached = await caches.match(req);
+  if (cached) return cached;
+  try {
+    const fresh = await fetch(req);
+    if (fresh.ok && fresh.type === "basic") {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(req, fresh.clone()).catch(() => {});
+    }
+    return fresh;
+  } catch {
+    return new Response("Offline", { status: 503 });
+  }
+}
+
 // --- Background Sync: poke the page to resume queued uploads -----------
-// The page registers a sync tag 'pd-media-resume-uploads' whenever it
-// queues something. Chrome/Android fires this when connectivity returns.
 self.addEventListener("sync", (event) => {
   if (event.tag !== "pd-media-resume-uploads") return;
   event.waitUntil(notifyClientsToResume());
 });
 
-// Send a message to every open client; the page handles the actual upload
-// resume logic (it already has all the chunking + IndexedDB code).
 async function notifyClientsToResume() {
   const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   for (const client of clients) client.postMessage({ type: "RESUME_UPLOADS" });
 }
 
-// Allow the page to ask us to wake up
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });

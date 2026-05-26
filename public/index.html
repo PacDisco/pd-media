@@ -659,11 +659,48 @@
   // =========================================================================
   // Service worker registration + PWA install hint
   // =========================================================================
+  // Strategy:
+  //   - Register the SW on load
+  //   - Call .update() on every page open + every visibility-return so the
+  //     browser checks for a new SW even if the cached HTML loaded
+  //   - When a new SW is waiting, ask it to skipWaiting and then refresh
+  //     the page so the freshest code is running
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/service-worker.js").catch(err => {
+    window.addEventListener("load", async () => {
+      try {
+        const reg = await navigator.serviceWorker.register("/service-worker.js");
+
+        // Force an update check now and whenever the tab becomes visible
+        // again (typical PWA reopen pattern on phones).
+        const checkForUpdates = () => reg.update().catch(() => {});
+        checkForUpdates();
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden) checkForUpdates();
+        });
+
+        // If a fresh SW installs, switch to it and reload the page.
+        reg.addEventListener("updatefound", () => {
+          const newWorker = reg.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener("statechange", () => {
+            if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+              // There's an older SW currently controlling the page; switch.
+              newWorker.postMessage({ type: "SKIP_WAITING" });
+            }
+          });
+        });
+
+        // When control switches to the new SW, reload once so the page is
+        // running the latest code. Guard against reload loops.
+        let reloaded = false;
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (reloaded) return;
+          reloaded = true;
+          window.location.reload();
+        });
+      } catch (err) {
         console.warn("SW registration failed:", err);
-      });
+      }
     });
   }
 
