@@ -468,6 +468,30 @@
     }
   }
 
+  // Wrap XHR in a Promise so we can `await` it like fetch but still get
+  // byte-level upload progress (fetch doesn't expose it). Resolves with a
+  // shape similar to what we used to read off `Response`.
+  function putChunk(url, blob, contentRange, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url, true);
+      xhr.setRequestHeader("Content-Range", contentRange);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded);
+      };
+      xhr.onload = () => {
+        resolve({
+          status:       xhr.status,
+          range:        xhr.getResponseHeader("range"),
+          responseText: xhr.responseText || "",
+        });
+      };
+      xhr.onerror   = () => reject(new Error("Network error"));
+      xhr.ontimeout = () => reject(new Error("Timed out"));
+      xhr.send(blob);
+    });
+  }
+
   async function uploadOne(rec) {
     // 1. If we don't have an upload URL yet, mint one.
     if (!rec.upload_url) {
@@ -490,6 +514,9 @@
     }
 
     // 2. Chunked PUTs until done.
+    // Use XMLHttpRequest so we can hook upload.onprogress for byte-level
+    // feedback. fetch() doesn't expose progress and would leave the UI
+    // at 0% for the whole duration of each chunk.
     const total = rec.size_bytes;
     while (rec.bytes_sent < total) {
       const start = rec.bytes_sent;
@@ -500,11 +527,13 @@
       let chunkResp;
       while (true) {
         try {
-          chunkResp = await fetch(rec.upload_url, {
-            method: "PUT",
-            headers: { "Content-Range": `bytes ${start}-${end-1}/${total}` },
-            body: blob,
-          });
+          chunkResp = await putChunk(rec.upload_url, blob, `bytes ${start}-${end-1}/${total}`,
+            (loaded) => {
+              // Smooth visual progress within the current chunk
+              rec.bytes_sent = start + loaded;
+              renderRow(rec, { skipPreview: true });
+            }
+          );
         } catch (netErr) {
           if (++attempt > MAX_RETRIES) throw new Error("Network failure: " + netErr.message);
           await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
@@ -513,7 +542,7 @@
 
         // 308 = resume incomplete; Drive tells us via Range header how much it has.
         if (chunkResp.status === 308) {
-          const range = chunkResp.headers.get("range");
+          const range = chunkResp.range;
           if (range) {
             const m = /bytes=0-(\d+)/.exec(range);
             if (m) rec.bytes_sent = Number(m[1]) + 1;
@@ -525,8 +554,12 @@
         }
         if (chunkResp.status === 200 || chunkResp.status === 201) {
           rec.bytes_sent = total;
-          const fileMeta = await chunkResp.json();
-          rec.drive_file_id = fileMeta.id;
+          try {
+            const fileMeta = JSON.parse(chunkResp.responseText);
+            rec.drive_file_id = fileMeta.id;
+          } catch (e) {
+            throw new Error("Drive returned non-JSON success: " + chunkResp.responseText.slice(0, 200));
+          }
           break;
         }
         // Retryable 5xx?
@@ -536,8 +569,7 @@
           continue;
         }
         // 4xx — likely expired upload URL or bad request; surface as failed.
-        const errTxt = await chunkResp.text();
-        throw new Error(`Drive ${chunkResp.status}: ${errTxt.slice(0, 200)}`);
+        throw new Error(`Drive ${chunkResp.status}: ${chunkResp.responseText.slice(0, 200)}`);
       }
       await dbPut(rec);
       renderRow(rec, { skipPreview: true });
