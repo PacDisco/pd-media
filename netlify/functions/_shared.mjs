@@ -100,27 +100,28 @@ export function handleOptions(req) {
 }
 
 // ---- Folder helpers -----------------------------------------------------
-const SHARED_DRIVE_ID = () => {
+// FIELD_UPLOADS_DRIVE_ID accepts EITHER a Shared Drive root (starts with 0A...)
+// OR a subfolder inside one (starts with 1...). We don't constrain — Drive's
+// API handles both transparently as long as supportsAllDrives is set.
+const UPLOAD_PARENT_ID = () => {
   const id = process.env.FIELD_UPLOADS_DRIVE_ID;
   if (!id) throw new Error("FIELD_UPLOADS_DRIVE_ID env var is not set");
   return id;
 };
 
-// Look up (or create) a subfolder under the shared drive. Returns { id, webViewLink }.
+// Look up (or create) a subfolder under the upload parent. Returns { id, webViewLink }.
 export async function ensureTripFolder(trip) {
   if (trip.drive_folder_id) return { id: trip.drive_folder_id, webViewLink: trip.drive_folder_url };
 
   const name = `${trip.season} ${trip.year} - ${trip.program}`;
   const d = await drive();
-  const driveId = SHARED_DRIVE_ID();
+  const parentId = UPLOAD_PARENT_ID();
 
-  // First, check if a folder with this name already exists at the root of the shared drive.
-  const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${driveId}' in parents`;
+  // Check if a folder with this name already exists under the configured parent.
+  const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`;
   const found = await d.files.list({
     q,
     fields: "files(id,webViewLink)",
-    corpora: "drive",
-    driveId,
     includeItemsFromAllDrives: true,
     supportsAllDrives: true,
   });
@@ -131,7 +132,7 @@ export async function ensureTripFolder(trip) {
     requestBody: {
       name,
       mimeType: "application/vnd.google-apps.folder",
-      parents: [driveId],
+      parents: [parentId],
     },
     fields: "id,webViewLink",
     supportsAllDrives: true,
