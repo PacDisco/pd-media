@@ -202,9 +202,13 @@
   // =========================================================================
   // Config
   // =========================================================================
-  const CHUNK_SIZE       = 8 * 1024 * 1024;        // 8 MB — balance for mobile
+  // Each chunk is proxied through /api/upload-chunk so we have to fit under
+  // Netlify's ~6 MB raw body limit on synchronous functions. 4 MB leaves
+  // headroom for framing overhead.
+  const CHUNK_SIZE       = 4 * 1024 * 1024;        // 4 MB
   const MAX_RETRIES      = 5;                       // per chunk
   const RETRY_BASE_MS    = 1000;                    // exponential backoff
+  const CHUNK_PROXY      = "/api/upload-chunk";
 
   // =========================================================================
   // IndexedDB (queue persistence)
@@ -468,23 +472,37 @@
     }
   }
 
-  // Wrap XHR in a Promise so we can `await` it like fetch but still get
-  // byte-level upload progress (fetch doesn't expose it). Resolves with a
-  // shape similar to what we used to read off `Response`.
-  function putChunk(url, blob, contentRange, onProgress) {
+  // Send a chunk to Drive *via our server-side proxy*. We don't PUT directly
+  // to googleapis.com because Drive's 308 responses don't reliably include
+  // CORS headers and the browser blocks them. The proxy is a thin pass-
+  // through; it doesn't see file contents beyond forwarding them.
+  function putChunk(uploadUrl, blob, contentRange, onProgress) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("PUT", url, true);
-      xhr.setRequestHeader("Content-Range", contentRange);
+      const proxiedTarget = `${CHUNK_PROXY}?url=${encodeURIComponent(uploadUrl)}`;
+      xhr.open("PUT", proxiedTarget, true);
+      // We can't use "Content-Range" as a custom header (browsers won't let
+      // us set it on cross-origin requests with credentials), so we pass
+      // the value in X-Content-Range and the server re-issues it correctly.
+      xhr.setRequestHeader("X-Content-Range", contentRange);
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) onProgress(e.loaded);
       };
       xhr.onload = () => {
-        resolve({
-          status:       xhr.status,
-          range:        xhr.getResponseHeader("range"),
-          responseText: xhr.responseText || "",
-        });
+        if (xhr.status !== 200) {
+          // The proxy itself errored — surface that
+          return reject(new Error(`Proxy ${xhr.status}: ${(xhr.responseText || "").slice(0, 200)}`));
+        }
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve({
+            status:       data.status,
+            range:        data.range,
+            responseText: data.body || "",
+          });
+        } catch (e) {
+          reject(new Error("Bad proxy response: " + e.message));
+        }
       };
       xhr.onerror   = () => reject(new Error("Network error"));
       xhr.ontimeout = () => reject(new Error("Timed out"));
